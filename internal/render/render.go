@@ -10,12 +10,15 @@ import (
 
 // MarkdownEmitter converts an AST Document into standard Markdown text.
 type MarkdownEmitter struct {
-	builder strings.Builder
+	builder         strings.Builder
+	MergeFormatting bool
 }
 
-// NewMarkdownEmitter instantiates an emitter.
+// NewMarkdownEmitter instantiates an emitter with markup optimizations enabled by default.
 func NewMarkdownEmitter() *MarkdownEmitter {
-	return &MarkdownEmitter{}
+	return &MarkdownEmitter{
+		MergeFormatting: true,
+	}
 }
 
 // Render traverses the AST and produces a markdown string.
@@ -104,19 +107,59 @@ func (e *MarkdownEmitter) renderNode(node *ast.Node) {
 	}
 }
 
+// CoalesceSpans merges adjacent text spans with identical formatting styles.
+// e.g. ["P"(bold), "r"(bold), "o"(bold)] -> ["Pro"(bold)].
+func CoalesceSpans(spans []ast.TextSpan) []ast.TextSpan {
+	if len(spans) <= 1 {
+		return spans
+	}
+
+	var merged []ast.TextSpan
+	current := spans[0]
+
+	for i := 1; i < len(spans); i++ {
+		next := spans[i]
+		if next.Style == current.Style {
+			current.Text += next.Text
+		} else {
+			merged = append(merged, current)
+			current = next
+		}
+	}
+	merged = append(merged, current)
+	return merged
+}
+
 func (e *MarkdownEmitter) renderSpans(spans []ast.TextSpan) {
+	if e.MergeFormatting {
+		spans = CoalesceSpans(spans)
+	}
+
 	for _, span := range spans {
 		text := span.Text
+		if text == "" {
+			continue
+		}
+		if span.Style == 0 || strings.TrimSpace(text) == "" {
+			e.builder.WriteString(text)
+			continue
+		}
+
+		trimmed := strings.TrimLeft(text, " \t\r\n")
+		lead := text[:len(text)-len(trimmed)]
+		content := strings.TrimRight(trimmed, " \t\r\n")
+		trail := trimmed[len(content):]
+
 		if span.Style&ast.StyleBold != 0 {
-			text = "**" + text + "**"
+			content = "**" + content + "**"
 		}
 		if span.Style&ast.StyleItalic != 0 {
-			text = "*" + text + "*"
+			content = "*" + content + "*"
 		}
 		if span.Style&ast.StyleCode != 0 {
-			text = "`" + text + "`"
+			content = "`" + content + "`"
 		}
-		e.builder.WriteString(text)
+		e.builder.WriteString(lead + content + trail)
 	}
 }
 

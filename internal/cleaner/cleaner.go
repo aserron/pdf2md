@@ -7,6 +7,7 @@ import (
 
 	"github.com/aserron/pdf2md/internal/ast"
 	"github.com/aserron/pdf2md/internal/parser"
+	"github.com/ledongthuc/pdf"
 )
 
 var (
@@ -22,13 +23,15 @@ var (
 		"preliminary",
 		"unapproved",
 		"proprietary",
+		"unlicensed",
 	}
 
 	// Pagination patterns for headers/footers (e.g. "Page 1", "Page 1 of 5", "1 / 10", "- 1 -")
 	pageNumberRegex = regexp.MustCompile(`^(?i)(page\s+\d+(\s+of\s+\d+)?|\d+\s*/\s*\d+|[-–—]\s*\d+\s*[-–—]|\d+)$`)
+	emailWatermark  = regexp.MustCompile(`(?i)[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}(\+[a-z0-9]+)?`)
 )
 
-// Cleaner provides methods to sanitize text lines.
+// Cleaner provides methods to sanitize text lines and raw PDF elements.
 type Cleaner struct {
 	customRegex *regexp.Regexp
 }
@@ -46,9 +49,43 @@ func NewCleaner(stripPattern string) (*Cleaner, error) {
 	return &Cleaner{customRegex: re}, nil
 }
 
-// FilterLines cleans invasive elements, watermarks, and margin artifacts from parsed lines.
-// Returns the filtered lines and the count of removed lines.
-func (c *Cleaner) FilterLines(lines []parser.Line, cleanWatermarks bool) ([]parser.Line, int) {
+// FilterWatermarkTexts purges microprint, off-canvas, and explicit watermark strings from raw page text.
+// Executing this before font analysis prevents microscopic watermarks from skewing font hierarchies.
+func (c *Cleaner) FilterWatermarkTexts(texts []pdf.Text, cleanWatermarks bool) ([]pdf.Text, int) {
+	if !cleanWatermarks || len(texts) == 0 {
+		return texts, 0
+	}
+
+	var filtered []pdf.Text
+	removed := 0
+
+	for _, t := range texts {
+		// 1. Off-canvas coordinates
+		if t.X < -50 || t.Y < -50 {
+			removed++
+			continue
+		}
+
+		// 2. Microprint watermarks (human readable text in documents is rarely < 6.0pt)
+		if t.FontSize > 0 && t.FontSize < 6.0 {
+			removed++
+			continue
+		}
+
+		// 3. Explicit watermark keywords
+		if isWatermarkText(t.S) || emailWatermark.MatchString(t.S) {
+			removed++
+			continue
+		}
+
+		filtered = append(filtered, t)
+	}
+
+	return filtered, removed
+}
+
+// FilterMarginLines cleans running headers, footers, and pagination artifacts from assembled lines.
+func (c *Cleaner) FilterMarginLines(lines []parser.Line, cleanMargins bool) ([]parser.Line, int) {
 	if len(lines) == 0 {
 		return nil, 0
 	}
@@ -64,14 +101,7 @@ func (c *Cleaner) FilterLines(lines []parser.Line, cleanWatermarks bool) ([]pars
 			continue
 		}
 
-		if cleanWatermarks {
-			// 1. Watermark phrase check
-			if isWatermarkText(trimmed) {
-				removedCount++
-				continue
-			}
-
-			// 2. Margin header/footer check
+		if cleanMargins {
 			// In standard 72-dpi letter/A4 pages:
 			// Top margin is typically Y > 750, bottom margin is Y < 55.
 			if (line.Y > 750 || line.Y < 55) && isMarginArtifact(trimmed) {
@@ -80,7 +110,7 @@ func (c *Cleaner) FilterLines(lines []parser.Line, cleanWatermarks bool) ([]pars
 			}
 		}
 
-		// 3. Custom regex stripping
+		// Custom regex stripping
 		if c.customRegex != nil {
 			cleanedSpans := c.stripSpans(line.Spans)
 			if len(cleanedSpans) == 0 || isEmptySpans(cleanedSpans) {
@@ -107,11 +137,9 @@ func isWatermarkText(text string) bool {
 }
 
 func isMarginArtifact(text string) bool {
-	// Check if matches page number pattern
 	if pageNumberRegex.MatchString(text) {
 		return true
 	}
-	// Also strip isolated single/double digits in margins
 	if len(text) <= 3 && strings.Trim(text, "0123456789- ") == "" {
 		return true
 	}

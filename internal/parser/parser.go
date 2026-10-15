@@ -16,9 +16,12 @@ import (
 
 // Options holds configuration needed by the parser.
 type Options struct {
-	PreserveStyles bool
-	FormatTables   bool
-	LineFilter     func([]Line) ([]Line, int)
+	PreserveStyles  bool
+	FormatTables    bool
+	CleanWatermarks bool
+	CleanMargins    bool
+	TextFilter      func([]pdf.Text) ([]pdf.Text, int)
+	LineFilter      func([]Line) ([]Line, int)
 }
 
 // Line represents a single horizontal line of text fragments.
@@ -45,36 +48,49 @@ func NewPDFParser() *PDFParser {
 }
 
 // Parse extracts text and layout from an io.ReaderAt into an AST Document.
-func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts Options) (*ast.Document, int, int, error) {
+// Returns document AST, page count, cleaned watermarks, cleaned margins, detected encoding, and error.
+func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts Options) (*ast.Document, int, int, int, string, error) {
 	reader, err := pdf.NewReader(r, size)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("failed to open pdf reader: %w", err)
+		return nil, 0, 0, 0, "Unknown", fmt.Errorf("failed to open pdf reader: %w", err)
 	}
 
 	numPages := reader.NumPage()
 	if numPages == 0 {
-		return ast.NewDocument(), 0, 0, nil
+		return ast.NewDocument(), 0, 0, 0, "UTF-8", nil
 	}
 
+	detectedEncoding := detectEncoding(reader)
 	rawPages := make([]RawPage, numPages)
 	var allFontSizes []float64
+	totalWatermarksCleaned := 0
 
 	for i := 1; i <= numPages; i++ {
 		select {
 		case <-ctx.Done():
-			return nil, 0, 0, ctx.Err()
+			return nil, 0, 0, 0, detectedEncoding, ctx.Err()
 		default:
 		}
 
 		page := reader.Page(i)
 		content := page.Content()
-		rawPages[i-1] = RawPage{
-			Number: i,
-			Texts:  content.Text,
+		pageTexts := content.Text
+
+		// Apply watermark pre-filter before font hierarchy analysis
+		if opts.TextFilter != nil {
+			var wCleaned int
+			pageTexts, wCleaned = opts.TextFilter(pageTexts)
+			totalWatermarksCleaned += wCleaned
 		}
 
-		for _, t := range content.Text {
-			if strings.TrimSpace(t.S) != "" && t.FontSize > 0 {
+		rawPages[i-1] = RawPage{
+			Number: i,
+			Texts:  pageTexts,
+		}
+
+		// Only sample human-readable font sizes (>= 6pt) to avoid microprint watermarks skewing the modal body size
+		for _, t := range pageTexts {
+			if strings.TrimSpace(t.S) != "" && t.FontSize >= 6.0 {
 				allFontSizes = append(allFontSizes, math.Round(t.FontSize*10)/10)
 			}
 		}
@@ -84,14 +100,14 @@ func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts O
 	fontHierarchy := computeFontHierarchy(allFontSizes)
 
 	doc := ast.NewDocument()
-	totalCleaned := 0
+	totalMarginsCleaned := 0
 
 	for _, page := range rawPages {
 		lines := groupIntoLines(page.Texts, page.Number)
 		if opts.LineFilter != nil {
-			var cleaned int
-			lines, cleaned = opts.LineFilter(lines)
-			totalCleaned += cleaned
+			var mCleaned int
+			lines, mCleaned = opts.LineFilter(lines)
+			totalMarginsCleaned += mCleaned
 		}
 		blockNodes := processLinesToBlocks(lines, fontHierarchy, opts)
 		for _, node := range blockNodes {
@@ -99,7 +115,31 @@ func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts O
 		}
 	}
 
-	return doc, numPages, totalCleaned, nil
+	return doc, numPages, totalWatermarksCleaned, totalMarginsCleaned, detectedEncoding, nil
+}
+
+func detectEncoding(reader *pdf.Reader) string {
+	if reader == nil || reader.NumPage() == 0 {
+		return "UTF-8"
+	}
+	hasUnicode := false
+	for i := 1; i <= reader.NumPage() && i <= 3; i++ {
+		page := reader.Page(i)
+		for _, fontName := range page.Fonts() {
+			lower := strings.ToLower(fontName)
+			if strings.Contains(lower, "identity") || strings.Contains(lower, "unicode") {
+				hasUnicode = true
+				break
+			}
+		}
+		if hasUnicode {
+			break
+		}
+	}
+	if hasUnicode {
+		return "UTF-8 (Identity-H / Unicode CMap)"
+	}
+	return "UTF-8 (WinAnsi / TrueType)"
 }
 
 // computeFontHierarchy clusters font sizes and identifies body font vs headings.
@@ -155,7 +195,7 @@ func groupIntoLines(texts []pdf.Text, pageNum int) []Line {
 	// Filter empty text
 	var valid []pdf.Text
 	for _, t := range texts {
-		if strings.TrimSpace(t.S) != "" {
+		if t.S != "" {
 			valid = append(valid, t)
 		}
 	}
@@ -164,14 +204,15 @@ func groupIntoLines(texts []pdf.Text, pageNum int) []Line {
 		return nil
 	}
 
-	// Sort primary by Y descending (PDF top to bottom), secondary by X ascending (left to right)
-	const yTolerance = 2.5
-	sort.Slice(valid, func(i, j int) bool {
+	// Sort primary by Y descending (top to bottom).
+	// Within vertical line tolerance, preserve stable stream reading order!
+	const yTolerance = 3.0
+	sort.SliceStable(valid, func(i, j int) bool {
 		diff := valid[i].Y - valid[j].Y
-		if math.Abs(diff) <= yTolerance {
-			return valid[i].X < valid[j].X
+		if math.Abs(diff) > yTolerance {
+			return valid[i].Y > valid[j].Y
 		}
-		return valid[i].Y > valid[j].Y
+		return false
 	})
 
 	var lines []Line
@@ -197,24 +238,40 @@ func groupIntoLines(texts []pdf.Text, pageNum int) []Line {
 	return lines
 }
 
-// assembleLine orders text fragments by X position and combines them into styled TextSpans.
+// assembleLine preserves natural stream reading order and combines elements into styled TextSpans.
 func assembleLine(elements []pdf.Text, y float64, pageNum int) Line {
-	sort.Slice(elements, func(i, j int) bool {
-		return elements[i].X < elements[j].X
-	})
+	// Preserve natural reading order from PDF stream.
+	// Only sort if elements represent out-of-order columns separated by large distance (> 30pt).
+	needsSort := false
+	for i := 1; i < len(elements); i++ {
+		if elements[i].X < elements[i-1].X-30.0 {
+			needsSort = true
+			break
+		}
+	}
+
+	if needsSort {
+		sort.SliceStable(elements, func(i, j int) bool {
+			diff := elements[i].X - elements[j].X
+			if math.Abs(diff) > 20.0 {
+				return elements[i].X < elements[j].X
+			}
+			return false
+		})
+	}
 
 	var spans []ast.TextSpan
 
 	for i, elem := range elements {
 		style := detectStyle(elem.Font)
 
-		// Insert space if there's a horizontal gap between adjacent fragments
+		// Insert space if there is an explicit horizontal gap between separate words
 		if i > 0 {
 			prev := elements[i-1]
-			gap := elem.X - (prev.X + prev.W)
-			// If gap is greater than ~1.5 points, insert spacing
-			if gap > 1.5 && !strings.HasSuffix(spans[len(spans)-1].Text, " ") && !strings.HasPrefix(elem.S, " ") {
-				spans[len(spans)-1].Text += " "
+			if prev.W > 0 && elem.X > prev.X+prev.W+2.0 {
+				if len(spans) > 0 && !strings.HasSuffix(spans[len(spans)-1].Text, " ") && !strings.HasPrefix(elem.S, " ") {
+					spans[len(spans)-1].Text += " "
+				}
 			}
 		}
 
@@ -441,7 +498,6 @@ func getHeadingLevel(line Line, hierarchy fontHierarchy) int {
 		return 0
 	}
 
-	// Calculate maximum font size in line
 	var maxFontSize float64
 	for _, span := range line.Spans {
 		if span.FontSize > maxFontSize {
@@ -451,7 +507,7 @@ func getHeadingLevel(line Line, hierarchy fontHierarchy) int {
 
 	for idx, size := range hierarchy.headingSizes {
 		if math.Abs(maxFontSize-size) <= 0.5 {
-			return idx + 1 // 1-indexed heading level
+			return idx + 1
 		}
 	}
 
@@ -476,8 +532,7 @@ func extractRowCells(line Line) ([]ast.TextSpan, bool) {
 	hasGap := false
 
 	for i, elem := range line.Elements {
-		s := strings.TrimSpace(elem.S)
-		if s == "" {
+		if elem.S == "" {
 			continue
 		}
 		if i > 0 {
@@ -492,12 +547,13 @@ func extractRowCells(line Line) ([]ast.TextSpan, bool) {
 					})
 					currentCell.Reset()
 				}
+			} else if prev.W > 0 && gap >= 2.5 {
+				if currentCell.Len() > 0 && !strings.HasSuffix(currentCell.String(), " ") && !strings.HasPrefix(elem.S, " ") {
+					currentCell.WriteString(" ")
+				}
 			}
 		}
-		if currentCell.Len() > 0 {
-			currentCell.WriteString(" ")
-		}
-		currentCell.WriteString(s)
+		currentCell.WriteString(elem.S)
 		currentStyle = detectStyle(elem.Font)
 	}
 
@@ -510,4 +566,3 @@ func extractRowCells(line Line) ([]ast.TextSpan, bool) {
 
 	return cells, hasGap && len(cells) >= 2
 }
-

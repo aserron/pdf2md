@@ -14,10 +14,14 @@ type Options struct {
 	ImageDir string
 	// ExtractDiagrams attempts vector bounding box extraction for charts.
 	ExtractDiagrams bool
-	// CleanWatermarks filters out repeating headers, footers, and watermark text.
+	// CleanWatermarks filters out microprint watermarks (< 6pt), off-canvas text, and watermark phrases.
 	CleanWatermarks bool
-	// PreserveStyles preserves font weight (bold), slant (italic), and monospace.
+	// CleanMargins filters out repeating headers, footers, and margin page numbers.
+	CleanMargins bool
+	// PreserveStyles preserves font weight (bold), slant (italic), and monospace code typography.
 	PreserveStyles bool
+	// MergeFormatting coalesces adjacent styled spans (e.g. merging individual bold letters into single **word** tokens).
+	MergeFormatting bool
 	// FormatTables identifies tabular column alignments and generates markdown tables.
 	FormatTables bool
 	// StripRegex specifies an optional regex pattern to scrub matching text.
@@ -31,7 +35,9 @@ func DefaultOptions() Options {
 		ImageDir:        "assets",
 		ExtractDiagrams: false,
 		CleanWatermarks: true,
+		CleanMargins:    true,
 		PreserveStyles:  true,
+		MergeFormatting: true,
 		FormatTables:    true,
 		StripRegex:      "",
 	}
@@ -39,10 +45,13 @@ func DefaultOptions() Options {
 
 // Result holds the conversion artifacts and telemetry.
 type Result struct {
-	Markdown    string
-	ImagePaths  []string
-	PageCount   int
-	CleanedRows int
+	Markdown          string
+	ImagePaths        []string
+	PageCount         int
+	CleanedWatermarks int
+	CleanedMargins    int
+	CleanedRows       int
+	DetectedEncoding  string
 }
 
 // Converter defines the conversion engine contract.
