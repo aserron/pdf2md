@@ -1,0 +1,6 @@
+# Treat PDFs and images as binary files to prevent CRLF line ending conversion
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
