@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pdf2md - PDF to Markdown Converter</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card-bg: #181b24;
+      --border: #282c37;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #10b981;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "Cascadia Code", "Fira Code", Consolas, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      background-color: var(--card-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-badge {
+      font-size: 11px;
+      font-weight: 600;
+      background: #2563eb22;
+      color: #60a5fa;
+      border: 1px solid #3b82f644;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    .main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .panel-left {
+      width: 380px;
+      background-color: var(--card-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 18px;
+      overflow-y: auto;
+    }
+
+    .panel-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg);
+      overflow: hidden;
+    }
+
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: 8px;
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: #11141c;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: #1e2433;
+    }
+
+    .dropzone-icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .dropzone-label {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .dropzone-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .file-input {
+      display: none;
+    }
+
+    .selected-file-card {
+      display: none;
+      background: #1e2433;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .selected-file-name {
+      font-weight: 600;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .options-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+    }
+
+    .toggle-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .toggle-input {
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .input-text {
+      width: 100%;
+      background: #11141c;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      font-family: var(--font-mono);
+      outline: none;
+    }
+
+    .input-text:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-convert {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s ease;
+    }
+
+    .btn-convert:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn-convert:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .stats-card {
+      display: none;
+      background: #11141c;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .preview-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background-color: var(--card-bg);
+    }
+
+    .preview-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-action {
+      background: #212631;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-action:hover:not(:disabled) {
+      background: #2a3140;
+      border-color: #3b82f6;
+    }
+
+    .btn-action:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .preview-content {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #0b0d13;
+    }
+
+    .placeholder-msg {
+      display: flex;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-family: var(--font-ui);
+    }
+
+    .spinner {
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: #fff;
+      border-radius: 50%;
+      width: 14px;
+      height: 14px;
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span class="brand-title">pdf2md</span>
+      <span class="brand-badge">Windows Desktop</span>
+    </div>
+    <div style="font-size: 13px; color: var(--text-muted);">
+      High-Performance PDF to Markdown Engine
+    </div>
+  </header>
+
+  <div class="main-container">
+    <!-- Left Configuration Panel -->
+    <div class="panel-left">
+      <div class="dropzone" id="dropzone">
+        <span class="dropzone-icon">📄</span>
+        <div class="dropzone-label">Select or Drag & Drop PDF</div>
+        <div class="dropzone-sub">Drop a .pdf file here</div>
+        <input type="file" id="fileInput" class="file-input" accept=".pdf">
+      </div>
+
+      <div class="selected-file-card" id="selectedFileCard">
+        <span class="selected-file-name" id="selectedFileName">document.pdf</span>
+        <button id="btnRemoveFile" style="background:none;border:none;color:#ef4444;cursor:pointer;font-weight:bold;">✕</button>
+      </div>
+
+      <div class="options-group">
+        <div class="section-title">Conversion Settings</div>
+
+        <label class="toggle-label">
+          <span>Clean watermarks & margins</span>
+          <input type="checkbox" id="chkClean" class="toggle-input" checked>
+        </label>
+
+        <label class="toggle-label">
+          <span>Extract embedded images</span>
+          <input type="checkbox" id="chkImages" class="toggle-input" checked>
+        </label>
+
+        <label class="toggle-label">
+          <span>Detect & format tables</span>
+          <input type="checkbox" id="chkTables" class="toggle-input" checked>
+        </label>
+
+        <label class="toggle-label">
+          <span>Preserve styles (bold/italic/code)</span>
+          <input type="checkbox" id="chkStyles" class="toggle-input" checked>
+        </label>
+
+        <label class="toggle-label">
+          <span>Extract diagram regions</span>
+          <input type="checkbox" id="chkDiagrams" class="toggle-input">
+        </label>
+      </div>
+
+      <div class="options-group">
+        <div class="section-title">Regex Scrub Filter (Optional)</div>
+        <input type="text" id="txtStrip" class="input-text" placeholder="e.g. \[UUID:[^\]]+\]">
+      </div>
+
+      <button id="btnConvert" class="btn-convert" disabled>
+        <span class="spinner" id="btnSpinner"></span>
+        <span id="btnText">Convert to Markdown</span>
+      </button>
+
+      <div class="stats-card" id="statsCard">
+        <div style="font-weight:700; margin-bottom: 6px; color:#60a5fa;">Conversion Telemetry</div>
+        <div>Pages: <b id="statPages">0</b></div>
+        <div>Cleaned Artifacts: <b id="statCleaned">0</b></div>
+        <div>Images Exported: <b id="statImages">0</b></div>
+        <div>Execution Duration: <b id="statTime">0 ms</b></div>
+      </div>
+    </div>
+
+    <!-- Right Live Preview Panel -->
+    <div class="panel-right">
+      <div class="preview-header">
+        <div style="font-size: 14px; font-weight: 600;">Markdown Output Preview</div>
+        <div class="preview-actions">
+          <button id="btnCopy" class="btn-action" disabled>📋 Copy</button>
+          <button id="btnDownload" class="btn-action" disabled>💾 Save File</button>
+        </div>
+      </div>
+      <div class="preview-content" id="previewContent">
+        <div class="placeholder-msg">Select a PDF file and click "Convert to Markdown" to generate output</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentFile = null;
+    let convertedMarkdown = "";
+
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const selectedFileCard = document.getElementById('selectedFileCard');
+    const selectedFileName = document.getElementById('selectedFileName');
+    const btnRemoveFile = document.getElementById('btnRemoveFile');
+    const btnConvert = document.getElementById('btnConvert');
+    const btnSpinner = document.getElementById('btnSpinner');
+    const btnText = document.getElementById('btnText');
+    const previewContent = document.getElementById('previewContent');
+    const btnCopy = document.getElementById('btnCopy');
+    const btnDownload = document.getElementById('btnDownload');
+    const statsCard = document.getElementById('statsCard');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFileSelect(e.target.files[0]);
+      }
+    });
+
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length > 0) {
+        handleFileSelect(e.dataTransfer.files[0]);
+      }
+    });
+
+    btnRemoveFile.addEventListener('click', () => {
+      currentFile = null;
+      fileInput.value = '';
+      dropzone.style.display = 'block';
+      selectedFileCard.style.display = 'none';
+      btnConvert.disabled = true;
+    });
+
+    function handleFileSelect(file) {
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        alert('Please select a valid PDF file.');
+        return;
+      }
+      currentFile = file;
+      selectedFileName.textContent = file.name;
+      dropzone.style.display = 'none';
+      selectedFileCard.style.display = 'flex';
+      btnConvert.disabled = false;
+    }
+
+    btnConvert.addEventListener('click', async () => {
+      if (!currentFile) return;
+
+      btnConvert.disabled = true;
+      btnSpinner.style.display = 'inline-block';
+      btnText.textContent = 'Converting...';
+
+      const formData = new FormData();
+      formData.append('file', currentFile);
+      formData.append('clean', document.getElementById('chkClean').checked);
+      formData.append('images', document.getElementById('chkImages').checked);
+      formData.append('tables', document.getElementById('chkTables').checked);
+      formData.append('styles', document.getElementById('chkStyles').checked);
+      formData.append('diagrams', document.getElementById('chkDiagrams').checked);
+      formData.append('strip', document.getElementById('txtStrip').value);
+
+      const startTime = performance.now();
+
+      try {
+        const response = await fetch('/api/convert', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(errText || 'Conversion failed');
+        }
+
+        const data = await response.json();
+        convertedMarkdown = data.markdown;
+
+        previewContent.textContent = convertedMarkdown;
+        btnCopy.disabled = false;
+        btnDownload.disabled = false;
+
+        const duration = Math.round(performance.now() - startTime);
+        document.getElementById('statPages').textContent = data.pages;
+        document.getElementById('statCleaned').textContent = data.cleaned_artifacts;
+        document.getElementById('statImages').textContent = data.images_count;
+        document.getElementById('statTime').textContent = duration + ' ms';
+        statsCard.style.display = 'block';
+
+      } catch (err) {
+        alert('Error: ' + err.message);
+      } finally {
+        btnConvert.disabled = false;
+        btnSpinner.style.display = 'none';
+        btnText.textContent = 'Convert to Markdown';
+      }
+    });
+
+    btnCopy.addEventListener('click', () => {
+      if (!convertedMarkdown) return;
+      navigator.clipboard.writeText(convertedMarkdown);
+      const original = btnCopy.textContent;
+      btnCopy.textContent = '✓ Copied!';
+      setTimeout(() => btnCopy.textContent = original, 1500);
+    });
+
+    btnDownload.addEventListener('click', () => {
+      if (!convertedMarkdown || !currentFile) return;
+      const baseName = currentFile.name.replace(/\.[^/.]+$/, "");
+      const blob = new Blob([convertedMarkdown], { type: 'text/markdown;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = baseName + '.md';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
