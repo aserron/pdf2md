@@ -33,11 +33,14 @@ Usage: pdf2md -i <input.pdf|folder> [-o <output.md|dir>] [flags]
 | `--images` | `bool` | `true` | Extract embedded raster images into the assets directory. |
 | `--image-dir` | `string` | `assets` | Directory where extracted images are saved. |
 | `--diagrams` | `bool` | `false` | Detect and export diagram bounding regions. |
-| `--clean` | `bool` | `true` | Strip watermarks (e.g. "CONFIDENTIAL", "DRAFT") and margin headers/footers. |
+| `--clean` | `bool` | `true` | Shorthand: enables both `--clean-watermarks` and `--clean-margins`. |
+| `--clean-watermarks` | `bool` | `true` | Strip watermarks (microprint < 6pt, off-canvas, confidential/draft phrases, emails). |
+| `--clean-margins` | `bool` | `true` | Strip margin headers, footers, and page numbering. |
 | `--styles` | `bool` | `true` | Preserve bold, italic, and monospace code typography. |
+| `--merge-styles` | `bool` | `true` | Merge adjacent identical styling spans (e.g. coalescing per-glyph bold runs). |
 | `--tables` | `bool` | `true` | Automatically detect multi-column table data and format as GFM tables. |
 | `--strip` | `string` | `""` | Optional regex pattern to scrub matching tokens from output. |
-| `--inspect` | `bool` | `false` | Dump structural diagnostic information as formatted JSON without converting. |
+| `--inspect` | `bool` | `false` | Dump structural diagnostic information as formatted JSON (including detected encoding). |
 | `--quiet` | `bool` | `false` | Suppress progress telemetry from stderr. |
 | `--version` | `bool` | `false` | Print version and exit. |
 

@@ -17,17 +17,18 @@ import (
 )
 
 var (
-	version = "1.0.0"
+	version = "1.1.0"
 )
 
 // InspectReport holds diagnostic structure data for a PDF file.
 type InspectReport struct {
-	FilePath    string   `json:"file_path"`
-	Pages       int      `json:"pages"`
-	FontsFound  []string `json:"fonts_found"`
-	HasImages   bool     `json:"has_images"`
-	FileSize    int64    `json:"file_size_bytes"`
-	DurationMs  int64    `json:"analysis_duration_ms"`
+	FilePath         string   `json:"file_path"`
+	Pages            int      `json:"pages"`
+	DetectedEncoding string   `json:"detected_encoding"`
+	FontsFound       []string `json:"fonts_found"`
+	HasImages        bool     `json:"has_images"`
+	FileSize         int64    `json:"file_size_bytes"`
+	DurationMs       int64    `json:"analysis_duration_ms"`
 }
 
 func main() {
@@ -38,8 +39,13 @@ func main() {
 	flag.BoolVar(&opts.ExtractImages, "images", opts.ExtractImages, "Extract embedded images into image directory")
 	flag.StringVar(&opts.ImageDir, "image-dir", opts.ImageDir, "Directory to store extracted images")
 	flag.BoolVar(&opts.ExtractDiagrams, "diagrams", opts.ExtractDiagrams, "Detect and extract diagram bounding regions")
-	flag.BoolVar(&opts.CleanWatermarks, "clean", opts.CleanWatermarks, "Strip watermarks and margin headers/footers")
+	
+	cleanAll := flag.Bool("clean", true, "Strip both watermarks and margin headers/footers")
+	flag.BoolVar(&opts.CleanWatermarks, "clean-watermarks", true, "Filter out microprint watermarks (< 6pt), off-canvas text, and watermark phrases")
+	flag.BoolVar(&opts.CleanMargins, "clean-margins", true, "Filter out repeating margin headers, footers, and page numbers")
+	
 	flag.BoolVar(&opts.PreserveStyles, "styles", opts.PreserveStyles, "Preserve bold, italic, and code typography")
+	flag.BoolVar(&opts.MergeFormatting, "merge-styles", opts.MergeFormatting, "Coalesce adjacent styled spans into unified formatting tokens")
 	flag.BoolVar(&opts.FormatTables, "tables", opts.FormatTables, "Detect and format markdown tables")
 	flag.StringVar(&opts.StripRegex, "strip", "", "Regex pattern to strip from output")
 	inspect := flag.Bool("inspect", false, "Output PDF structure diagnostics in JSON without converting")
@@ -53,7 +59,8 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf -o document.md\n")
-		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf --clean --images --image-dir assets/\n")
+		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf --clean-watermarks --clean-margins=false\n")
+		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf --merge-styles=true\n")
 		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf --strip \"\\[UUID:[^\\]]+\\]\"\n")
 		fmt.Fprintf(os.Stderr, "  pdf2md -i ./manuals/ -o ./markdown/ (batch conversion)\n")
 		fmt.Fprintf(os.Stderr, "  pdf2md -i document.pdf --inspect\n")
@@ -69,6 +76,18 @@ func main() {
 	if *input == "" {
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// Handle overarching -clean flag
+	isCleanFlagPassed := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "clean" {
+			isCleanFlagPassed = true
+		}
+	})
+	if isCleanFlagPassed && !*cleanAll {
+		opts.CleanWatermarks = false
+		opts.CleanMargins = false
 	}
 
 	stat, err := os.Stat(*input)
@@ -133,13 +152,12 @@ func main() {
 			fmt.Fprintf(os.Stderr, "pdf2md: wrote %d bytes to '%s'\n", len(res.Markdown), *output)
 		}
 	} else {
-		// Output to stdout
 		io.WriteString(os.Stdout, res.Markdown)
 	}
 
 	if !*quiet {
-		fmt.Fprintf(os.Stderr, "pdf2md: finished in %v | Pages: %d | Cleaned Artifacts: %d | Extracted Images: %d\n",
-			duration.Round(time.Millisecond), res.PageCount, res.CleanedRows, len(res.ImagePaths))
+		fmt.Fprintf(os.Stderr, "pdf2md: finished in %v | Pages: %d | Watermarks Cleaned: %d | Margins Cleaned: %d | Images: %d | Encoding: %s\n",
+			duration.Round(time.Millisecond), res.PageCount, res.CleanedWatermarks, res.CleanedMargins, len(res.ImagePaths), res.DetectedEncoding)
 	}
 }
 
@@ -173,7 +191,7 @@ func runBatch(ctx context.Context, engine *pdf2md.Engine, inDir, outDir string, 
 	}
 
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 4) // max 4 concurrent conversions
+	semaphore := make(chan struct{}, 4)
 	var errCount int
 	var mu sync.Mutex
 
@@ -247,12 +265,22 @@ func runInspect(filePath string) error {
 
 	numPages := reader.NumPage()
 	fontMap := make(map[string]bool)
+	hasUnicode := false
 
 	for i := 1; i <= numPages; i++ {
 		page := reader.Page(i)
 		for _, fontName := range page.Fonts() {
 			fontMap[fontName] = true
+			lower := strings.ToLower(fontName)
+			if strings.Contains(lower, "identity") || strings.Contains(lower, "unicode") {
+				hasUnicode = true
+			}
 		}
+	}
+
+	encoding := "UTF-8 (WinAnsi / TrueType)"
+	if hasUnicode {
+		encoding = "UTF-8 (Identity-H / Unicode CMap)"
 	}
 
 	var fonts []string
@@ -261,11 +289,12 @@ func runInspect(filePath string) error {
 	}
 
 	report := InspectReport{
-		FilePath:   filePath,
-		Pages:      numPages,
-		FontsFound: fonts,
-		FileSize:   stat.Size(),
-		DurationMs: time.Since(start).Milliseconds(),
+		FilePath:         filePath,
+		Pages:            numPages,
+		DetectedEncoding: encoding,
+		FontsFound:       fonts,
+		FileSize:         stat.Size(),
+		DurationMs:       time.Since(start).Milliseconds(),
 	}
 
 	encoder := json.NewEncoder(os.Stdout)

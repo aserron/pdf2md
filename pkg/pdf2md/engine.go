@@ -12,6 +12,7 @@ import (
 	"github.com/aserron/pdf2md/internal/extractor"
 	"github.com/aserron/pdf2md/internal/parser"
 	"github.com/aserron/pdf2md/internal/render"
+	"github.com/ledongthuc/pdf"
 )
 
 // Engine is the default implementation of Converter.
@@ -38,24 +39,33 @@ func (e *Engine) Convert(ctx context.Context, r io.ReaderAt, size int64, opts Op
 	}
 
 	parserOpts := parser.Options{
-		PreserveStyles: opts.PreserveStyles,
-		FormatTables:   opts.FormatTables,
+		PreserveStyles:  opts.PreserveStyles,
+		FormatTables:    opts.FormatTables,
+		CleanWatermarks: opts.CleanWatermarks,
+		CleanMargins:    opts.CleanMargins,
+		TextFilter: func(texts []pdf.Text) ([]pdf.Text, int) {
+			return cl.FilterWatermarkTexts(texts, opts.CleanWatermarks)
+		},
 		LineFilter: func(lines []parser.Line) ([]parser.Line, int) {
-			return cl.FilterLines(lines, opts.CleanWatermarks)
+			return cl.FilterMarginLines(lines, opts.CleanMargins)
 		},
 	}
 
-	doc, pageCount, cleanedCount, err := e.parser.Parse(ctx, r, size, parserOpts)
+	doc, pageCount, watermarksCleaned, marginsCleaned, detectedEncoding, err := e.parser.Parse(ctx, r, size, parserOpts)
 	if err != nil {
 		return nil, fmt.Errorf("conversion failed: %w", err)
 	}
 
+	e.emitter.MergeFormatting = opts.MergeFormatting
 	markdown := e.emitter.Render(doc)
 
 	return &Result{
-		Markdown:    markdown,
-		PageCount:   pageCount,
-		CleanedRows: cleanedCount,
+		Markdown:          markdown,
+		PageCount:         pageCount,
+		CleanedWatermarks: watermarksCleaned,
+		CleanedMargins:    marginsCleaned,
+		CleanedRows:       watermarksCleaned + marginsCleaned,
+		DetectedEncoding:  detectedEncoding,
 	}, nil
 }
 

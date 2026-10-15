@@ -72,13 +72,13 @@
     }
 
     .panel-left {
-      width: 380px;
+      width: 400px;
       background-color: var(--card-bg);
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       padding: 20px;
-      gap: 18px;
+      gap: 16px;
       overflow-y: auto;
     }
 
@@ -93,7 +93,7 @@
     .dropzone {
       border: 2px dashed var(--border);
       border-radius: 8px;
-      padding: 28px 16px;
+      padding: 24px 16px;
       text-align: center;
       cursor: pointer;
       transition: all 0.2s ease;
@@ -106,8 +106,8 @@
     }
 
     .dropzone-icon {
-      font-size: 28px;
-      margin-bottom: 8px;
+      font-size: 26px;
+      margin-bottom: 6px;
       display: block;
     }
 
@@ -140,7 +140,7 @@
 
     .selected-file-name {
       font-weight: 600;
-      max-width: 260px;
+      max-width: 280px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -149,11 +149,11 @@
     .options-group {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
     }
 
     .section-title {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -330,26 +330,44 @@
       </div>
 
       <div class="options-group">
-        <div class="section-title">Conversion Settings</div>
+        <div class="section-title">Sanitization Pipeline</div>
 
         <label class="toggle-label">
-          <span>Clean watermarks & margins</span>
-          <input type="checkbox" id="chkClean" class="toggle-input" checked>
+          <span>Strip watermarks & microprint</span>
+          <input type="checkbox" id="chkWatermarks" class="toggle-input" checked>
         </label>
 
         <label class="toggle-label">
-          <span>Extract embedded images</span>
-          <input type="checkbox" id="chkImages" class="toggle-input" checked>
+          <span>Clean margin headers & footers</span>
+          <input type="checkbox" id="chkMargins" class="toggle-input" checked>
+        </label>
+      </div>
+
+      <div class="options-group">
+        <div class="section-title">Markup & Typography Optimizations</div>
+
+        <label class="toggle-label">
+          <span>Merge adjacent formatting (coalesce styles)</span>
+          <input type="checkbox" id="chkMergeStyles" class="toggle-input" checked>
         </label>
 
         <label class="toggle-label">
-          <span>Detect & format tables</span>
+          <span>Preserve typography (bold/italic/code)</span>
+          <input type="checkbox" id="chkStyles" class="toggle-input" checked>
+        </label>
+
+        <label class="toggle-label">
+          <span>Detect & format markdown tables</span>
           <input type="checkbox" id="chkTables" class="toggle-input" checked>
         </label>
+      </div>
+
+      <div class="options-group">
+        <div class="section-title">Asset Pipeline</div>
 
         <label class="toggle-label">
-          <span>Preserve styles (bold/italic/code)</span>
-          <input type="checkbox" id="chkStyles" class="toggle-input" checked>
+          <span>Extract embedded raster images</span>
+          <input type="checkbox" id="chkImages" class="toggle-input" checked>
         </label>
 
         <label class="toggle-label">
@@ -359,7 +377,7 @@
       </div>
 
       <div class="options-group">
-        <div class="section-title">Regex Scrub Filter (Optional)</div>
+        <div class="section-title">Custom Regex Scrub (Optional)</div>
         <input type="text" id="txtStrip" class="input-text" placeholder="e.g. \[UUID:[^\]]+\]">
       </div>
 
@@ -370,8 +388,10 @@
 
       <div class="stats-card" id="statsCard">
         <div style="font-weight:700; margin-bottom: 6px; color:#60a5fa;">Conversion Telemetry</div>
-        <div>Pages: <b id="statPages">0</b></div>
-        <div>Cleaned Artifacts: <b id="statCleaned">0</b></div>
+        <div>Detected Encoding: <b id="statEncoding" style="color:#10b981;">UTF-8</b></div>
+        <div>Pages Processed: <b id="statPages">0</b></div>
+        <div>Watermarks Scrubbed: <b id="statWatermarks">0</b></div>
+        <div>Margin Artifacts Cleaned: <b id="statMargins">0</b></div>
         <div>Images Exported: <b id="statImages">0</b></div>
         <div>Execution Duration: <b id="statTime">0 ms</b></div>
       </div>
@@ -461,7 +481,9 @@
 
       const formData = new FormData();
       formData.append('file', currentFile);
-      formData.append('clean', document.getElementById('chkClean').checked);
+      formData.append('watermarks', document.getElementById('chkWatermarks').checked);
+      formData.append('margins', document.getElementById('chkMargins').checked);
+      formData.append('merge_styles', document.getElementById('chkMergeStyles').checked);
       formData.append('images', document.getElementById('chkImages').checked);
       formData.append('tables', document.getElementById('chkTables').checked);
       formData.append('styles', document.getElementById('chkStyles').checked);
@@ -489,8 +511,10 @@
         btnDownload.disabled = false;
 
         const duration = Math.round(performance.now() - startTime);
+        document.getElementById('statEncoding').textContent = data.detected_encoding || 'UTF-8';
         document.getElementById('statPages').textContent = data.pages;
-        document.getElementById('statCleaned').textContent = data.cleaned_artifacts;
+        document.getElementById('statWatermarks').textContent = data.cleaned_watermarks;
+        document.getElementById('statMargins').textContent = data.cleaned_margins;
         document.getElementById('statImages').textContent = data.images_count;
         document.getElementById('statTime').textContent = duration + ' ms';
         statsCard.style.display = 'block';
