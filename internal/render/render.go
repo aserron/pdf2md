@@ -75,6 +75,30 @@ func (e *MarkdownEmitter) renderNode(node *ast.Node) {
 			}
 		}
 
+	case ast.NodeTable:
+		if len(node.Children) == 0 {
+			return
+		}
+		header := node.Children[0]
+		e.builder.WriteString("|")
+		for _, cell := range header.Children {
+			e.builder.WriteString(" ")
+			e.renderSpans(cell.Spans)
+			e.builder.WriteString(" |")
+		}
+		e.builder.WriteString("\n|")
+		for range header.Children {
+			e.builder.WriteString(" --- |")
+		}
+		for _, row := range node.Children[1:] {
+			e.builder.WriteString("\n|")
+			for _, cell := range row.Children {
+				e.builder.WriteString(" ")
+				e.renderSpans(cell.Spans)
+				e.builder.WriteString(" |")
+			}
+		}
+
 	case ast.NodeHorizontalRule:
 		e.builder.WriteString("---")
 	}

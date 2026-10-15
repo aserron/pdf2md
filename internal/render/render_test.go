@@ -37,3 +37,36 @@ func TestMarkdownEmitter(t *testing.T) {
 		t.Errorf("heading not rendered correctly: %s", out)
 	}
 }
+
+func TestTableRendering(t *testing.T) {
+	table := &ast.Node{
+		Type: ast.NodeTable,
+		Children: []*ast.Node{
+			{
+				Type: ast.NodeTableRow,
+				Children: []*ast.Node{
+					{Type: ast.NodeTableCell, Spans: []ast.TextSpan{{Text: "Name"}}},
+					{Type: ast.NodeTableCell, Spans: []ast.TextSpan{{Text: "Role"}}},
+				},
+			},
+			{
+				Type: ast.NodeTableRow,
+				Children: []*ast.Node{
+					{Type: ast.NodeTableCell, Spans: []ast.TextSpan{{Text: "Alice"}}},
+					{Type: ast.NodeTableCell, Spans: []ast.TextSpan{{Text: "Engineer"}}},
+				},
+			},
+		},
+	}
+
+	doc := ast.NewDocument()
+	doc.Append(table)
+
+	emitter := NewMarkdownEmitter()
+	out := emitter.Render(doc)
+
+	expected := "| Name | Role |\n| --- | --- |\n| Alice | Engineer |\n"
+	if out != expected {
+		t.Fatalf("unexpected table rendering:\nGot:\n%q\nExpected:\n%q", out, expected)
+	}
+}

@@ -17,6 +17,8 @@ import (
 // Options holds configuration needed by the parser.
 type Options struct {
 	PreserveStyles bool
+	FormatTables   bool
+	LineFilter     func([]Line) ([]Line, int)
 }
 
 // Line represents a single horizontal line of text fragments.
@@ -43,15 +45,15 @@ func NewPDFParser() *PDFParser {
 }
 
 // Parse extracts text and layout from an io.ReaderAt into an AST Document.
-func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts Options) (*ast.Document, int, error) {
+func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts Options) (*ast.Document, int, int, error) {
 	reader, err := pdf.NewReader(r, size)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to open pdf reader: %w", err)
+		return nil, 0, 0, fmt.Errorf("failed to open pdf reader: %w", err)
 	}
 
 	numPages := reader.NumPage()
 	if numPages == 0 {
-		return ast.NewDocument(), 0, nil
+		return ast.NewDocument(), 0, 0, nil
 	}
 
 	rawPages := make([]RawPage, numPages)
@@ -60,7 +62,7 @@ func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts O
 	for i := 1; i <= numPages; i++ {
 		select {
 		case <-ctx.Done():
-			return nil, 0, ctx.Err()
+			return nil, 0, 0, ctx.Err()
 		default:
 		}
 
@@ -82,16 +84,22 @@ func (p *PDFParser) Parse(ctx context.Context, r io.ReaderAt, size int64, opts O
 	fontHierarchy := computeFontHierarchy(allFontSizes)
 
 	doc := ast.NewDocument()
+	totalCleaned := 0
 
 	for _, page := range rawPages {
 		lines := groupIntoLines(page.Texts, page.Number)
+		if opts.LineFilter != nil {
+			var cleaned int
+			lines, cleaned = opts.LineFilter(lines)
+			totalCleaned += cleaned
+		}
 		blockNodes := processLinesToBlocks(lines, fontHierarchy, opts)
 		for _, node := range blockNodes {
 			doc.Append(node)
 		}
 	}
 
-	return doc, numPages, nil
+	return doc, numPages, totalCleaned, nil
 }
 
 // computeFontHierarchy clusters font sizes and identifies body font vs headings.
@@ -255,6 +263,35 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 	var codeBlockLines []string
 	inCodeBlock := false
 
+	var tableRows [][]*ast.Node
+
+	flushTable := func() {
+		if len(tableRows) >= 2 {
+			tableNode := &ast.Node{Type: ast.NodeTable}
+			for _, rowCells := range tableRows {
+				rowNode := &ast.Node{
+					Type:     ast.NodeTableRow,
+					Children: rowCells,
+				}
+				tableNode.Children = append(tableNode.Children, rowNode)
+			}
+			nodes = append(nodes, tableNode)
+		} else if len(tableRows) == 1 {
+			var spans []ast.TextSpan
+			for idx, cell := range tableRows[0] {
+				spans = append(spans, cell.Spans...)
+				if idx < len(tableRows[0])-1 {
+					spans = append(spans, ast.TextSpan{Text: " "})
+				}
+			}
+			nodes = append(nodes, &ast.Node{
+				Type:  ast.NodeParagraph,
+				Spans: spans,
+			})
+		}
+		tableRows = nil
+	}
+
 	flushList := func() {
 		if currentList != nil {
 			nodes = append(nodes, currentList)
@@ -282,6 +319,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 
 		// Horizontal rule check
 		if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+			flushTable()
 			flushList()
 			flushCodeBlock()
 			nodes = append(nodes, &ast.Node{Type: ast.NodeHorizontalRule})
@@ -298,6 +336,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 		}
 
 		if isCodeLine && opts.PreserveStyles {
+			flushTable()
 			flushList()
 			inCodeBlock = true
 			codeBlockLines = append(codeBlockLines, rawText)
@@ -309,6 +348,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 		// Check for heading level
 		headingLevel := getHeadingLevel(line, hierarchy)
 		if headingLevel > 0 {
+			flushTable()
 			flushList()
 			flushCodeBlock()
 			nodes = append(nodes, &ast.Node{
@@ -321,6 +361,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 
 		// Blockquote check
 		if strings.HasPrefix(trimmed, ">") {
+			flushTable()
 			flushList()
 			flushCodeBlock()
 			content := strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))
@@ -333,6 +374,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 
 		// Unordered list check
 		if match := bulletRegex.FindStringSubmatch(trimmed); match != nil {
+			flushTable()
 			flushCodeBlock()
 			if currentList == nil || currentList.Ordered {
 				flushList()
@@ -347,6 +389,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 
 		// Ordered list check
 		if match := numberRegex.FindStringSubmatch(trimmed); match != nil {
+			flushTable()
 			flushCodeBlock()
 			if currentList == nil || !currentList.Ordered {
 				flushList()
@@ -359,7 +402,25 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 			continue
 		}
 
+		// Table row check
+		if opts.FormatTables {
+			if cells, isRow := extractRowCells(line); isRow {
+				flushList()
+				flushCodeBlock()
+				var cellNodes []*ast.Node
+				for _, c := range cells {
+					cellNodes = append(cellNodes, &ast.Node{
+						Type:  ast.NodeTableCell,
+						Spans: []ast.TextSpan{c},
+					})
+				}
+				tableRows = append(tableRows, cellNodes)
+				continue
+			}
+		}
+
 		// Default: Paragraph
+		flushTable()
 		flushList()
 		flushCodeBlock()
 		nodes = append(nodes, &ast.Node{
@@ -368,6 +429,7 @@ func processLinesToBlocks(lines []Line, hierarchy fontHierarchy, opts Options) [
 		})
 	}
 
+	flushTable()
 	flushList()
 	flushCodeBlock()
 
@@ -403,3 +465,49 @@ func lineText(line Line) string {
 	}
 	return b.String()
 }
+
+func extractRowCells(line Line) ([]ast.TextSpan, bool) {
+	if len(line.Elements) < 2 {
+		return nil, false
+	}
+	var cells []ast.TextSpan
+	var currentCell strings.Builder
+	var currentStyle ast.InlineStyle
+	hasGap := false
+
+	for i, elem := range line.Elements {
+		s := strings.TrimSpace(elem.S)
+		if s == "" {
+			continue
+		}
+		if i > 0 {
+			prev := line.Elements[i-1]
+			gap := elem.X - (prev.X + prev.W)
+			if gap >= 15.0 {
+				hasGap = true
+				if currentCell.Len() > 0 {
+					cells = append(cells, ast.TextSpan{
+						Text:  strings.TrimSpace(currentCell.String()),
+						Style: currentStyle,
+					})
+					currentCell.Reset()
+				}
+			}
+		}
+		if currentCell.Len() > 0 {
+			currentCell.WriteString(" ")
+		}
+		currentCell.WriteString(s)
+		currentStyle = detectStyle(elem.Font)
+	}
+
+	if currentCell.Len() > 0 {
+		cells = append(cells, ast.TextSpan{
+			Text:  strings.TrimSpace(currentCell.String()),
+			Style: currentStyle,
+		})
+	}
+
+	return cells, hasGap && len(cells) >= 2
+}
+
