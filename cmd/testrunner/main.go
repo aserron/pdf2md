@@ -30,12 +30,12 @@ func main() {
 		{Y: 20, Spans: []ast.TextSpan{{Text: "1"}}},
 	}
 
-	filtered, removed := cl.FilterLines(testLines, true)
-	if removed != 3 || len(filtered) != 1 {
-		fatal("cleaner expected 3 removed, 1 remaining; got %d removed, %d remaining", removed, len(filtered))
+	filtered, removed := cl.FilterMarginLines(testLines, true)
+	if removed != 2 || len(filtered) != 2 {
+		fatal("cleaner expected 2 removed, 2 remaining; got %d removed, %d remaining", removed, len(filtered))
 	}
-	if !strings.Contains(filtered[0].Spans[0].Text, "Active item  in table.") {
-		fatal("regex stripping failed: %q", filtered[0].Spans[0].Text)
+	if !strings.Contains(filtered[1].Spans[0].Text, "Active item  in table.") {
+		fatal("regex stripping failed: %q", filtered[1].Spans[0].Text)
 	}
 	fmt.Println(" OK")
 

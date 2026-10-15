@@ -27,7 +27,9 @@ When launched, `pdf2md-gui` initializes an embedded local service and automatica
 - **File Picker**: Click on the drop zone to open the native Windows file selector dialog.
 
 ### 2. Conversion Configuration
-- **Clean Watermarks & Margins**: Automatically removes recurring margin headers, footers, pagination indicators, and standard watermark phrases ("CONFIDENTIAL", "DRAFT", "SAMPLE").
+- **Clean Watermarks**: Dedicated toggle to strip microprint tracking lines (< 6pt), off-canvas text, email signatures, and watermark phrases ("CONFIDENTIAL", "DRAFT").
+- **Clean Margins**: Strips recurring top and bottom header/footer margin lines and page numbering.
+- **Merge Formatting Styles**: Coalesces adjacent character spans sharing identical styling to prevent broken per-glyph markdown tags (`**w****o****r****d**`).
 - **Extract Embedded Images**: Exports all embedded raster images into an assets folder and generates corresponding Markdown image tags.
 - **Detect & Format Tables**: Analyzes column horizontal alignments to format multi-column text into GitHub-flavored Markdown tables.
 - **Preserve Styles**: Preserves font weights (bold), font slants (italic), and monospace code fragments.
@@ -37,4 +39,4 @@ When launched, `pdf2md-gui` initializes an embedded local service and automatica
 - **Interactive Markdown Viewer**: Instant split-pane view displaying generated Markdown text.
 - **One-Click Copy**: Copies generated Markdown directly to the Windows clipboard.
 - **Save File**: Exports the resulting `.md` file to disk.
-- **Telemetry Card**: Displays execution duration in milliseconds, total pages processed, cleaned artifact count, and extracted image count.
+- **Telemetry Card**: Displays execution duration in milliseconds, total pages processed, cleaned watermarks, cleaned margins, extracted images, and detected font encoding (e.g. `UTF-8 (Identity-H / Unicode CMap)`).

@@ -24,11 +24,14 @@ import (
 var uiFS embed.FS
 
 type ConversionResponse struct {
-	Markdown         string   `json:"markdown"`
-	Pages            int      `json:"pages"`
-	CleanedArtifacts int      `json:"cleaned_artifacts"`
-	ImagesCount      int      `json:"images_count"`
-	Images           []string `json:"images,omitempty"`
+	Markdown          string   `json:"markdown"`
+	Pages             int      `json:"pages"`
+	CleanedWatermarks int      `json:"cleaned_watermarks"`
+	CleanedMargins    int      `json:"cleaned_margins"`
+	CleanedArtifacts  int      `json:"cleaned_artifacts"`
+	DetectedEncoding  string   `json:"detected_encoding"`
+	ImagesCount       int      `json:"images_count"`
+	Images            []string `json:"images,omitempty"`
 }
 
 func main() {
@@ -68,7 +71,6 @@ func main() {
 			return
 		}
 
-		// 32MB max memory buffer for uploads
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			http.Error(w, "Upload parsing error: "+err.Error(), http.StatusBadRequest)
 			return
@@ -81,7 +83,6 @@ func main() {
 		}
 		defer file.Close()
 
-		// Write upload to temporary file
 		tmpFile, err := os.CreateTemp("", "pdf2md-upload-*.pdf")
 		if err != nil {
 			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
@@ -100,7 +101,9 @@ func main() {
 		tmpFile.Close()
 
 		opts := pdf2md.DefaultOptions()
-		opts.CleanWatermarks = parseBool(r.FormValue("clean"), true)
+		opts.CleanWatermarks = parseBool(r.FormValue("watermarks"), true)
+		opts.CleanMargins = parseBool(r.FormValue("margins"), true)
+		opts.MergeFormatting = parseBool(r.FormValue("merge_styles"), true)
 		opts.ExtractImages = parseBool(r.FormValue("images"), true)
 		opts.FormatTables = parseBool(r.FormValue("tables"), true)
 		opts.PreserveStyles = parseBool(r.FormValue("styles"), true)
@@ -119,11 +122,14 @@ func main() {
 		}
 
 		resp := ConversionResponse{
-			Markdown:         res.Markdown,
-			Pages:            res.PageCount,
-			CleanedArtifacts: res.CleanedRows,
-			ImagesCount:      len(res.ImagePaths),
-			Images:           res.ImagePaths,
+			Markdown:          res.Markdown,
+			Pages:             res.PageCount,
+			CleanedWatermarks: res.CleanedWatermarks,
+			CleanedMargins:    res.CleanedMargins,
+			CleanedArtifacts:  res.CleanedRows,
+			DetectedEncoding:  res.DetectedEncoding,
+			ImagesCount:       len(res.ImagePaths),
+			Images:            res.ImagePaths,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -142,10 +148,8 @@ func main() {
 
 	fmt.Printf("pdf2md Windows GUI running at: %s\n", appURL)
 
-	// Launch native desktop window
 	go launchDesktopWindow(appURL)
 
-	// Wait for termination signal
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
@@ -171,7 +175,6 @@ func launchDesktopWindow(url string) {
 	time.Sleep(100 * time.Millisecond)
 
 	if runtime.GOOS == "windows" {
-		// Attempt to launch Microsoft Edge in standalone desktop application mode
 		edgePaths := []string{
 			`C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 			`C:\Program Files\Microsoft\Edge\Application\msedge.exe`,
@@ -185,7 +188,6 @@ func launchDesktopWindow(url string) {
 			}
 		}
 
-		// Fallback to standard Windows shell browser launcher
 		exec.Command("cmd", "/c", "start", url).Start()
 	} else {
 		exec.Command("xdg-open", url).Start()
