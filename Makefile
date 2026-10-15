@@ -39,7 +39,7 @@ build-gui:
 	go build -trimpath -ldflags="-s -w -H=windowsgui" -o $(BINARY_GUI) ./cmd/pdf2md-gui
 
 test:
-	go test -v -race ./...
+	go run ./cmd/testrunner
 
 bench:
 	go test -bench=. -benchmem ./...
